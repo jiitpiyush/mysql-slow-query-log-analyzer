@@ -1,0 +1,130 @@
+#!/usr/bin/perl
+
+use Getopt::Long;
+
+my $path1 = '/var/log/slow-queries.log';
+my $path2 = '/var/log/mysql/log-slow-queries.log';
+
+__PACKAGE__->new->main;
+exit;
+
+sub new { bless $_[1] || {}, $_[0] }
+
+sub options {
+    my $self = shift;
+    return $self->{'options'} ||= do {
+        my $options = {};
+        GetOptions($options, qw(file|f=s date|d=s output_dir|o=s));
+        $options;
+    };
+}
+
+sub main {
+    my $self = shift;
+    my $options = $self->options;
+
+    my $basedir = $options->{'output_dir'} || '/tmp';
+    die "Outdir is not a directory" if ! -d $basedir;
+    my $outdir = "$basedir/slow-query-logs";
+    mkdir $outdir or die "Unable to create directory $outdir: $!\n" if ! -d $outdir;
+
+    my $file = $options->{'file'}
+             || (-e $path1 ? $path1
+             :  -e $path2 ? $path2
+             : '');
+    die "No path specified and unable to find slow query log\n" if ! $file;
+    die "File does not exist: $file\n" if ! -e $file;
+    die "File is not readable: $file\n" if ! -r $file;
+
+    open my $fh, '<', $file or die "Unable to open $file: $!\n";
+
+    my ($day, $mon, $year) = (localtime)[3..5];
+    my $today = sprintf "%02d%02d%02d", $year - 100, $mon + 1, $day;
+    my $date;
+    my $path;
+    my $out;
+    my ($count, $time) = (0, 0);
+    while (my $line = <$fh>) {
+
+        if ($line =~ /Query_time: ([\d\.]+).*/) {
+            $count++;
+            $time += $1;
+        }
+        # if we hit a new timestamp, need to check if the date has changed
+        if (my ($temp_date) = $line =~ /Time: (\d{6})/) {
+
+            # if its today's date then just quit now so we don't create a partial file
+            last if $temp_date eq $today;
+
+            # if its the same date we already have open, just print and move on
+            if ($date && $temp_date eq $date) {
+                print $out $line if $out;
+                next;
+            }
+
+            # if its a new date, then we need to switch output files
+            else {
+                if ($out) {
+                    close $out;
+                    (my $nice = $date) =~ s/(\d\d)(\d\d)(\d\d)/20$1-$2-$3/;
+                    printf "%s\t%d\t%0.2f\t%d\n", $nice, $count, $count ? $time / $count : 0, $time;
+                    `mysqldumpslow -s at $path/slow-queries.log >$path/slow-dump.byavgtime.log 2>/dev/null`;
+                    `mysqldumpslow -s c $path/slow-queries.log >$path/slow-dump.bycount.log 2>/dev/null`;
+                    `mysqldumpslow -s t $path/slow-queries.log >$path/slow-dump.bytime.log 2>/dev/null`;
+                }
+                $path = "$outdir/$temp_date";
+                if (-e $path) {
+                    # this date's file already exists, assume it is correct and move on
+                    $out = undef;
+                } else {
+                    mkdir $path or die "Unable to create directory $path: $!\n";
+                    # file doesn't exist, so create it and start writing to it
+                    open $out, '>>', "$path/slow-queries.log" or die "Unable to open $path: $!";
+                    print $out $line;
+                }
+                $date = $temp_date;
+                $count = 0;
+                $time = 0;
+            }
+        }
+
+        # otherwise just print to the open filehandle (if we have one)
+        elsif ($out) {
+            print $out $line;
+        }
+    }
+
+    if ($out) {
+        close $out;
+        (my $nice = $date) =~ s/(\d\d)(\d\d)(\d\d)/20$1-$2-$3/;
+        printf "%s\t%d\t%0.2f\t%d\n", $nice, $count, $count ? $time / $count : 0, $time;
+        $count = 0;
+        $time = 0;
+        `mysqldumpslow -s at $path/slow-queries.log >$path/slow-dump.byavgtime.log 2>/dev/null`;
+        `mysqldumpslow -s c $path/slow-queries.log >$path/slow-dump.bycount.log 2>/dev/null`;
+        `mysqldumpslow -s t $path/slow-queries.log >$path/slow-dump.bytime.log 2>/dev/null`;
+    }
+}
+
+__END__
+# Time: 090715  2:29:39
+# User@Host: root[root] @ localhost []
+# Query_time: 6  Lock_time: 0  Rows_sent: 0  Rows_examined: 0
+use cp_billing;
+CREATE TABLE `xfer_hope` (
+  `id` int(10) unsigned NOT NULL auto_increment,
+  `domainid` int(10) unsigned NOT NULL default '0',
+  `email` varchar(200) NOT NULL default '',
+  `whois` text NOT NULL,
+  `discovered` datetime NOT NULL default '0000-00-00 00:00:00',
+  `creationdate` datetime NOT NULL default '0000-00-00 00:00:00',
+  `expires` datetime NOT NULL default '0000-00-00 00:00:00',
+  `lastmodified` timestamp NOT NULL default CURRENT_TIMESTAMP on update CURRENT_TIMESTAMP,
+  PRIMARY KEY  (`id`),
+  UNIQUE KEY `domainid` (`domainid`),
+  KEY `creationdate` (`creationdate`),
+  KEY `expires` (`expires`),
+  KEY `lastmodified` (`lastmodified`),
+  KEY `email` (`email`)
+) ENGINE=InnoDB AUTO_INCREMENT=640066 DEFAULT CHARSET=latin1;
+
